@@ -1,15 +1,19 @@
 import io
 from flask import Flask, request, send_file, jsonify
-from PIL import Image
+from PIL import Image, ImageFile
 import threading
 # Lazy import rembg to speed up startup and allow immediate port binding
 remove_fn = None
 session = None
+ready_event = threading.Event()
 
 app = Flask(__name__)
 
 # Limit upload size to avoid excessive memory usage
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+# Allow loading truncated images
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Ensure plaintext errors for common failures
 @app.errorhandler(413)
@@ -34,17 +38,19 @@ def _preload_rembg():
         session = _new_session("u2netp")
         # Warm up the model to avoid first-request timeouts
         try:
-            from PIL import Image as _Image
-            blank_img = _Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+            blank_img = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
             remove_fn(blank_img, session=session)
         except Exception as warm_e:
             print(f"rembg warm-up failed (continuing): {warm_e}")
+        finally:
+            ready_event.set()
     except Exception as e:
         print(f"rembg preload failed: {e}")
+        # Keep not ready so requests can return 503 quickly
 
 threading.Thread(target=_preload_rembg, daemon=True).start()
 
-def downscale_if_needed(img: Image.Image, max_dim: int = 1024) -> Image.Image:
+def downscale_if_needed(img: Image.Image, max_dim: int = 800) -> Image.Image:
     try:
         w, h = img.size
         if max(w, h) > max_dim:
@@ -64,19 +70,16 @@ def health():
 def remove_bg():
     file = request.files.get("image")
     if not file:
-        return jsonify({"error": "Missing 'image' file field"}), 400
+        return ("Missing 'image' file field", 400, {"Content-Type": "text/plain"})
+
+    # If model not ready yet, return a fast 503 instead of trying to import within request
+    if not ready_event.is_set() or remove_fn is None or session is None:
+        return ("Model not ready, please retry in a few seconds", 503, {"Content-Type": "text/plain"})
 
     try:
-        # Initialize rembg lazily on first request to avoid heavy import at startup
-        global remove_fn, session
-        if remove_fn is None or session is None:
-            from rembg import remove as _remove, new_session as _new_session
-            remove_fn = _remove
-            session = _new_session("u2netp")
-
         # Read the image from the uploaded file
         img = Image.open(file.stream).convert("RGBA")
-        img = downscale_if_needed(img, max_dim=1024)
+        img = downscale_if_needed(img, max_dim=800)
 
         # Remove background using rembg (returns PIL Image)
         out_img = remove_fn(img, session=session)
