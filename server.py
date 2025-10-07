@@ -8,6 +8,22 @@ session = None
 
 app = Flask(__name__)
 
+# Limit upload size to avoid excessive memory usage
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+# Ensure plaintext errors for common failures
+@app.errorhandler(413)
+def handle_request_entity_too_large(e):
+    return ("File too large", 413, {"Content-Type": "text/plain"})
+
+@app.errorhandler(405)
+def handle_method_not_allowed(e):
+    return ("Method Not Allowed", 405, {"Content-Type": "text/plain"})
+
+@app.errorhandler(500)
+def handle_internal_error(e):
+    return (f"Internal Server Error: {e}", 500, {"Content-Type": "text/plain"})
+
 # Preload rembg in a background thread so the first request is faster
 def _preload_rembg():
     global remove_fn, session
