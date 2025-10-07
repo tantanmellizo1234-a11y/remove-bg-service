@@ -4,21 +4,31 @@ from PIL import Image
 import threading
 # Lazy import rembg to speed up startup and allow immediate port binding
 remove_fn = None
+session = None
 
 app = Flask(__name__)
 
 # Preload rembg in a background thread so the first request is faster
 def _preload_rembg():
-    global remove_fn
+    global remove_fn, session
     try:
-        from rembg import remove as _remove
+        from rembg import remove as _remove, new_session as _new_session
         remove_fn = _remove
+        # Use a lighter/faster model to reduce processing time on free-tier CPU
+        session = _new_session("u2netp")
+        # Warm up the model to avoid first-request timeouts
+        try:
+            from PIL import Image as _Image
+            blank_img = _Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+            remove_fn(blank_img, session=session)
+        except Exception as warm_e:
+            print(f"rembg warm-up failed (continuing): {warm_e}")
     except Exception as e:
         print(f"rembg preload failed: {e}")
 
 threading.Thread(target=_preload_rembg, daemon=True).start()
 
-def downscale_if_needed(img: Image.Image, max_dim: int = 1280) -> Image.Image:
+def downscale_if_needed(img: Image.Image, max_dim: int = 1024) -> Image.Image:
     try:
         w, h = img.size
         if max(w, h) > max_dim:
@@ -42,17 +52,18 @@ def remove_bg():
 
     try:
         # Initialize rembg lazily on first request to avoid heavy import at startup
-        global remove_fn
-        if remove_fn is None:
-            from rembg import remove as _remove
+        global remove_fn, session
+        if remove_fn is None or session is None:
+            from rembg import remove as _remove, new_session as _new_session
             remove_fn = _remove
+            session = _new_session("u2netp")
 
         # Read the image from the uploaded file
         img = Image.open(file.stream).convert("RGBA")
-        img = downscale_if_needed(img, max_dim=1280)
+        img = downscale_if_needed(img, max_dim=1024)
 
         # Remove background using rembg (returns PIL Image)
-        out_img = remove_fn(img)
+        out_img = remove_fn(img, session=session)
 
         # Encode as PNG bytes
         buf = io.BytesIO()
