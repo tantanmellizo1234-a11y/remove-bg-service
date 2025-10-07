@@ -5,5 +5,5 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 180
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 180 --workers 1
     autoDeploy: true
