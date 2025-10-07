@@ -1,4 +1,6 @@
 import io
+import os
+import tempfile
 from flask import Flask, request, send_file, jsonify
 from PIL import Image, ImageFile
 import threading
@@ -8,6 +10,16 @@ session = None
 ready_event = threading.Event()
 
 app = Flask(__name__)
+
+# Configure rembg model cache directory to a writable path (use /tmp on Render)
+# rembg caches models under ~/.u2net by default; explicitly set REMBG_HOME to an ephemeral, writable dir
+# to ensure the model can download and initialize successfully on stateless environments.
+cache_dir = os.environ.get("REMBG_HOME") or os.path.join(tempfile.gettempdir(), ".u2net")
+os.environ["REMBG_HOME"] = cache_dir
+os.makedirs(cache_dir, exist_ok=True)
+# Reduce CPU threads to lower resource usage on free-tier environments
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+print(f"Using REMBG_HOME: {os.environ['REMBG_HOME']}")
 
 # Limit upload size to avoid excessive memory usage
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
@@ -33,6 +45,8 @@ def _preload_rembg():
     global remove_fn, session
     try:
         from rembg import remove as _remove, new_session as _new_session
+        print("Starting rembg preload...")
+        print(f"Model cache directory: {os.environ.get('REMBG_HOME')}")
         remove_fn = _remove
         # Use a lighter/faster model to reduce processing time on free-tier CPU
         session = _new_session("u2netp")
@@ -40,6 +54,7 @@ def _preload_rembg():
         try:
             blank_img = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
             remove_fn(blank_img, session=session)
+            print("rembg warm-up completed.")
         except Exception as warm_e:
             print(f"rembg warm-up failed (continuing): {warm_e}")
         finally:
