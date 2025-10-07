@@ -12,10 +12,10 @@ preload_error = None
 
 app = Flask(__name__)
 
-# Configure rembg model cache directory to a writable path (use /tmp on Render)
-# rembg caches models under ~/.u2net by default; explicitly set REMBG_HOME to an ephemeral, writable dir
+# Configure rembg model cache directory to a writable path (prefer project folder to align with build prefetch)
+# rembg caches models under ~/.u2net by default; explicitly set REMBG_HOME to a persistent, writable dir
 # to ensure the model can download and initialize successfully on stateless environments.
-cache_dir = os.environ.get("REMBG_HOME") or os.path.join(tempfile.gettempdir(), ".u2net")
+cache_dir = os.environ.get("REMBG_HOME") or os.path.join(os.getcwd(), ".u2net")
 os.environ["REMBG_HOME"] = cache_dir
 os.makedirs(cache_dir, exist_ok=True)
 # Reduce CPU threads to lower resource usage on free-tier environments
