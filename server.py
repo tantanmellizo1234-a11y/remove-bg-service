@@ -8,6 +8,7 @@ import threading
 remove_fn = None
 session = None
 ready_event = threading.Event()
+preload_error = None
 
 app = Flask(__name__)
 
@@ -42,7 +43,7 @@ def handle_internal_error(e):
 
 # Preload rembg in a background thread so the first request is faster
 def _preload_rembg():
-    global remove_fn, session
+    global remove_fn, session, preload_error
     try:
         from rembg import remove as _remove, new_session as _new_session
         print("Starting rembg preload...")
@@ -60,8 +61,10 @@ def _preload_rembg():
         finally:
             ready_event.set()
     except Exception as e:
-        print(f"rembg preload failed: {e}")
-        # Keep not ready so requests can return 503 quickly
+        preload_error = str(e)
+        print(f"rembg preload failed: {preload_error}")
+        # Ensure we don't block forever on readiness checks
+        ready_event.set()
 
 threading.Thread(target=_preload_rembg, daemon=True).start()
 
@@ -81,6 +84,14 @@ def downscale_if_needed(img: Image.Image, max_dim: int = 800) -> Image.Image:
 def health():
     return jsonify({"status": "ok"})
 
+@app.get("/ready")
+def ready():
+    return jsonify({
+        "ready": ready_event.is_set(),
+        "error": preload_error is not None,
+        "message": preload_error or "ok"
+    })
+
 @app.post("/remove-bg")
 def remove_bg():
     file = request.files.get("image")
@@ -88,8 +99,15 @@ def remove_bg():
         return ("Missing 'image' file field", 400, {"Content-Type": "text/plain"})
 
     # If model not ready yet, return a fast 503 instead of trying to import within request
-    if not ready_event.is_set() or remove_fn is None or session is None:
+    if not ready_event.is_set():
         return ("Model not ready, please retry in a few seconds", 503, {"Content-Type": "text/plain"})
+
+    # If preload failed, return 500 with explicit message for diagnosis
+    if preload_error is not None:
+        return (f"Model preload failed: {preload_error}", 500, {"Content-Type": "text/plain"})
+
+    if remove_fn is None or session is None:
+        return ("Model not loaded", 500, {"Content-Type": "text/plain"})
 
     try:
         # Read the image from the uploaded file
