@@ -35,7 +35,8 @@ def remove_bg():
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Return plaintext error for easier client-side logging
+        return (str(e), 500, {"Content-Type": "text/plain"})
 
 if __name__ == "__main__":
     # Local dev run: python server.py
